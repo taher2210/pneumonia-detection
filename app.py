@@ -1,5 +1,31 @@
 import streamlit as st
 import os
+import sys
+
+# Install required packages if not already installed
+st.write("Checking and installing required packages...")
+packages_to_install = [
+    "gdown",
+    "numpy",
+    "matplotlib",
+    "tensorflow",
+    "pillow"
+]
+
+def install_packages():
+    import subprocess
+    for package in packages_to_install:
+        try:
+            __import__(package)
+            st.write(f"✅ {package} is already installed")
+        except ImportError:
+            st.write(f"📦 Installing {package}...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+            st.write(f"✅ {package} installed successfully")
+
+install_packages()
+
+# Now import the required packages
 import gdown
 import numpy as np
 import matplotlib.pyplot as plt
@@ -169,6 +195,7 @@ def analyze_image(img_data):
         
     except Exception as e:
         st.error(f"❌ Error processing image: {e}")
+        st.error(f"Details: {str(e)}")
         return None
 
 # Upload File
@@ -212,6 +239,7 @@ if uploaded_file is not None:
                     st.progress(probability if probability > 0.5 else 1-probability)
     except Exception as e:
         st.error(f"❌ Error: {e}")
+        st.error(f"Details: {str(e)}")
 
 # Footer
 st.markdown(
