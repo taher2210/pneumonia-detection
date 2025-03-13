@@ -43,65 +43,47 @@ def download_model():
             return False
     return True
 
-# Improved function to generate GradCAM heatmap
-def make_gradcam_heatmap(img_array, model):
-    # First, ensure the model has been called at least once
-    _ = model(img_array)
+# Alternative simple attention visualization
+def create_simple_attention_map(img_array, model):
+    """
+    Create a simple saliency map by taking the gradient of the output with respect to the input image.
+    This is a simpler alternative to GradCAM that works with any model architecture.
+    """
+    # Convert input to tensor if it's not already
+    if not isinstance(img_array, tf.Tensor):
+        img_tensor = tf.convert_to_tensor(img_array, dtype=tf.float32)
+    else:
+        img_tensor = img_array
     
-    # Find the last convolutional layer
-    last_conv_layer = None
-    for layer in reversed(model.layers):
-        # Check if it's a Conv layer directly
-        if isinstance(layer, tf.keras.layers.Conv2D):
-            last_conv_layer = layer
-            break
-        # Check if it's a container that might have Conv layers
-        elif hasattr(layer, 'layers'):
-            for inner_layer in reversed(layer.layers):
-                if isinstance(inner_layer, tf.keras.layers.Conv2D):
-                    last_conv_layer = inner_layer
-                    break
-            if last_conv_layer is not None:
-                break
+    # Make sure it's the right shape (batch, height, width, channels)
+    if len(img_tensor.shape) < 4:
+        img_tensor = tf.expand_dims(img_tensor, 0)
     
-    if last_conv_layer is None:
-        st.warning("Could not find a convolutional layer for GradCAM visualization")
-        return None
-    
-    # Create a simplified gradcam approach
-    conv_outputs = None
-    grad_model = None
-    
-    # Try to create a model up to the last conv layer
-    try:
-        grad_model = tf.keras.models.Model(
-            inputs=model.inputs,
-            outputs=[last_conv_layer.output, model.output]
-        )
-    except:
-        st.warning("Could not create gradient model for visualization")
-        return None
-    
-    # Record operations for automatic differentiation
+    # Create a GradientTape to track operations for automatic differentiation
     with tf.GradientTape() as tape:
-        conv_outputs, predictions = grad_model(img_array)
-        class_idx = 0  # For pneumonia in binary classification
-        score = predictions[:, class_idx]
+        # Watch the input tensor
+        tape.watch(img_tensor)
+        # Get the prediction (assuming binary classification)
+        pred = model(img_tensor)
+        # Get the output for the positive class (pneumonia)
+        class_output = pred[:, 0]
     
-    # Gradient of the output with respect to the last conv layer
-    grads = tape.gradient(score, conv_outputs)
+    # Get the gradient of the output with respect to the input
+    grads = tape.gradient(class_output, img_tensor)
     
-    # Global average pooling
-    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+    # Take the absolute value of the gradients (we care about magnitude, not direction)
+    grads = tf.abs(grads)
     
-    # Weight the channels by gradient importance
-    conv_outputs = conv_outputs[0]
-    heatmap = tf.reduce_sum(tf.multiply(pooled_grads, conv_outputs), axis=-1)
+    # Reduce across the color channels to get a single map
+    grads = tf.reduce_mean(grads, axis=-1)
     
-    # Normalize the heatmap
-    heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
+    # Normalize to [0, 1]
+    grads = grads / tf.reduce_max(grads)
     
-    return heatmap.numpy()
+    # Get as numpy for easier handling
+    attention_map = grads[0].numpy()
+    
+    return attention_map
 
 # Function to overlay heatmap on image
 def overlay_heatmap(img, heatmap, alpha=0.4):
@@ -113,16 +95,16 @@ def overlay_heatmap(img, heatmap, alpha=0.4):
     
     # Resize heatmap to match input image size
     heatmap = np.uint8(255 * heatmap)
-    heatmap = Image.fromarray(heatmap)
-    heatmap = heatmap.resize((img_array.shape[1], img_array.shape[0]))
-    heatmap = np.array(heatmap)
+    heatmap_img = Image.fromarray(heatmap)
+    heatmap_img = heatmap_img.resize((img_array.shape[1], img_array.shape[0]))
+    heatmap = np.array(heatmap_img)
     
     # Apply colormap to heatmap
-    heatmap = cm.jet(heatmap)[:, :, :3]  # Drop alpha channel
-    heatmap = np.uint8(255 * heatmap)
+    colormap = cm.jet(heatmap / 255.0)[:, :, :3]  # Drop alpha channel
+    colormap = np.uint8(255 * colormap)
     
     # Overlay heatmap on original image
-    overlay = np.uint8(heatmap * alpha + img_array * (1 - alpha))
+    overlay = np.uint8(colormap * alpha + img_array * (1 - alpha))
     
     return overlay
 
@@ -141,7 +123,7 @@ if download_model():
 else:
     st.stop()
 
-# Function to Classify Image and generate GradCAM
+# Function to Classify Image and generate visualization
 def analyze_image(img_data):
     try:
         # Open image from bytes
@@ -167,13 +149,19 @@ def analyze_image(img_data):
         prediction = model.predict(img_array_batch)[0][0]
         probability = float(prediction)
         
-        # Generate GradCAM heatmap
-        heatmap = make_gradcam_heatmap(img_array_batch, model)
-        
-        if heatmap is not None:
-            # Create heatmap overlay on original image
-            overlay_img = overlay_heatmap(img_resized, heatmap)
-        else:
+        # Try to generate visualization
+        try:
+            # Use simpler alternative visualization
+            heatmap = create_simple_attention_map(img_array_batch, model)
+            
+            if heatmap is not None:
+                # Create heatmap overlay on original image
+                overlay_img = overlay_heatmap(img_resized, heatmap)
+            else:
+                overlay_img = None
+        except Exception as viz_error:
+            st.warning(f"Visualization could not be generated: {viz_error}")
+            heatmap = None
             overlay_img = None
         
         return {
@@ -219,9 +207,9 @@ if uploaded_file is not None:
                         st.success(result)
                         st.write(f"Confidence: {(1-probability):.2%}")
                     
-                    # Display GradCAM visualization if available
+                    # Display visualization if available
                     if results['overlay_img'] is not None:
-                        st.subheader("GradCAM Visualization")
+                        st.subheader("Attention Visualization")
                         st.image(results['overlay_img'], caption="Heatmap of areas influencing the model's decision", use_column_width=True)
                         st.info("The highlighted areas (red/yellow) show regions the model focused on when making its prediction.")
                     
@@ -244,9 +232,9 @@ with st.expander("How to use this app"):
     st.markdown("""
     1. Upload a chest X-ray image (JPG, PNG, or JPEG format)
     2. Click the "Analyze X-ray" button
-    3. View the results, confidence score, and heatmap visualization
+    3. View the results, confidence score, and visualization
     
-    **About the Heatmap**: The heatmap highlights areas that most influenced the model's decision. Warmer colors (red/yellow) indicate regions with higher importance for the diagnosis.
+    **About the Visualization**: The heatmap highlights areas that most influenced the model's decision. Warmer colors (red/yellow) indicate regions with higher importance for the diagnosis.
     
     Note: This app works best with properly oriented, front-view chest X-ray images.
     """)
@@ -256,7 +244,7 @@ with st.expander("About the model"):
     This application uses a convolutional neural network (CNN) trained on a dataset of chest X-ray images.
     The model was trained to distinguish between normal chest X-rays and those showing signs of pneumonia.
     
-    The GradCAM visualization helps make the model's decision process more transparent by showing which regions of the image contributed most to the classification.
+    The visualization helps make the model's decision process more transparent by showing which regions of the image contributed most to the classification.
     
     Please note that this is an educational tool and should not replace professional medical diagnosis.
     Always consult with a healthcare professional for medical advice.
