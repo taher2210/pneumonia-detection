@@ -2,10 +2,13 @@ import streamlit as st
 import os
 import gdown
 import numpy as np
-from tensorflow.keras.models import load_model
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from tensorflow.keras.models import load_model, Model
 from tensorflow.keras.preprocessing import image
 from PIL import Image
 import io
+import tensorflow as tf
 
 # Streamlit Page Configuration
 st.set_page_config(page_title="Pneumonia Detection", layout="centered")
@@ -16,6 +19,7 @@ st.markdown(
     """
     This AI-powered tool helps in detecting **pneumonia** from chest X-ray images using a deep learning model.
     Simply upload an X-ray image, and the model will analyze it for signs of pneumonia. 
+    The heatmap visualization shows which areas of the X-ray influenced the model's decision.
     """
 )
 
@@ -36,6 +40,76 @@ def download_model():
             return False
     return True
 
+# Function to generate GradCAM heatmap
+def make_gradcam_heatmap(img_array, model):
+    # Create a model that maps the input image to the activations of the last conv layer
+    last_conv_layer = None
+    
+    # Find the last convolutional layer
+    for layer in reversed(model.layers):
+        if 'conv' in layer.name.lower():
+            last_conv_layer = layer.name
+            break
+    
+    if last_conv_layer is None:
+        st.warning("Could not find a convolutional layer for GradCAM visualization")
+        return None
+    
+    last_conv_layer_model = Model(
+        inputs=model.inputs,
+        outputs=[
+            model.get_layer(last_conv_layer).output, 
+            model.output
+        ]
+    )
+    
+    # Compute gradients
+    with tf.GradientTape() as tape:
+        # Forward pass to get conv layer output and model prediction
+        conv_output, predictions = last_conv_layer_model(img_array)
+        class_index = 0  # Pneumonia is typically index 0 in binary classification
+        loss = predictions[:, class_index]
+    
+    # Extract gradients
+    grads = tape.gradient(loss, conv_output)
+    
+    # Pool gradients
+    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+    
+    # Weight output feature maps with gradients
+    conv_output = conv_output[0]
+    heatmap = conv_output @ pooled_grads[..., tf.newaxis]
+    heatmap = tf.squeeze(heatmap)
+    
+    # Normalize heatmap
+    heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
+    heatmap = heatmap.numpy()
+    
+    return heatmap
+
+# Function to overlay heatmap on image
+def overlay_heatmap(img, heatmap, alpha=0.4):
+    # Convert PIL Image to numpy array if it's not already
+    if isinstance(img, Image.Image):
+        img_array = np.array(img)
+    else:
+        img_array = img
+    
+    # Resize heatmap to match input image size
+    heatmap = np.uint8(255 * heatmap)
+    heatmap = Image.fromarray(heatmap)
+    heatmap = heatmap.resize((img_array.shape[1], img_array.shape[0]))
+    heatmap = np.array(heatmap)
+    
+    # Apply colormap to heatmap
+    heatmap = cm.jet(heatmap)[:, :, :3]  # Drop alpha channel
+    heatmap = np.uint8(255 * heatmap)
+    
+    # Overlay heatmap on original image
+    overlay = np.uint8(heatmap * alpha + img_array * (1 - alpha))
+    
+    return overlay
+
 # Download and load model
 if download_model():
     try:
@@ -51,24 +125,48 @@ if download_model():
 else:
     st.stop()
 
-# Function to Classify Image
-def predict_image(img_data):
+# Function to Classify Image and generate GradCAM
+def analyze_image(img_data):
     try:
         # Open image from bytes
         img = Image.open(io.BytesIO(img_data))
+        
+        # Save original image for display
+        orig_img = img.copy()
+        
         # Convert to RGB if grayscale
         if img.mode != 'RGB':
             img = img.convert('RGB')
-        # Resize image
-        img = img.resize((150, 150))
+        
+        # Resize image for model input
+        img_resized = img.resize((150, 150))
+        
         # Convert to array and normalize
-        img_array = np.array(img) / 255.0
+        img_array = np.array(img_resized) / 255.0
+        
         # Add batch dimension
-        img_array = np.expand_dims(img_array, axis=0)
+        img_array_batch = np.expand_dims(img_array, axis=0)
+        
         # Make prediction
-        prediction = model.predict(img_array)[0][0]
+        prediction = model.predict(img_array_batch)[0][0]
         probability = float(prediction)
-        return probability
+        
+        # Generate GradCAM heatmap
+        heatmap = make_gradcam_heatmap(img_array_batch, model)
+        
+        if heatmap is not None:
+            # Create heatmap overlay on original image
+            overlay_img = overlay_heatmap(img_resized, heatmap)
+        else:
+            overlay_img = None
+        
+        return {
+            'original_img': orig_img,
+            'probability': probability,
+            'heatmap': heatmap,
+            'overlay_img': overlay_img
+        }
+        
     except Exception as e:
         st.error(f"❌ Error processing image: {e}")
         return None
@@ -89,10 +187,12 @@ if uploaded_file is not None:
         # Prediction Button
         if st.button("🔍 Analyze X-ray"):
             with st.spinner("Analyzing image..."):
-                probability = predict_image(file_bytes)
+                results = analyze_image(file_bytes)
                 
-                if probability is not None:
+                if results is not None:
                     # Display results
+                    probability = results['probability']
+                    
                     if probability > 0.5:
                         result = "🫁 **Pneumonia Detected**"
                         st.error(result)
@@ -101,7 +201,13 @@ if uploaded_file is not None:
                         result = "✅ **Normal**"
                         st.success(result)
                         st.write(f"Confidence: {(1-probability):.2%}")
-                        
+                    
+                    # Display GradCAM visualization if available
+                    if results['overlay_img'] is not None:
+                        st.subheader("GradCAM Visualization")
+                        st.image(results['overlay_img'], caption="Heatmap of areas influencing the model's decision", use_column_width=True)
+                        st.info("The highlighted areas (red/yellow) show regions the model focused on when making its prediction.")
+                    
                     # Add visualization of confidence
                     st.progress(probability if probability > 0.5 else 1-probability)
     except Exception as e:
@@ -120,7 +226,9 @@ with st.expander("How to use this app"):
     st.markdown("""
     1. Upload a chest X-ray image (JPG, PNG, or JPEG format)
     2. Click the "Analyze X-ray" button
-    3. View the results and confidence score
+    3. View the results, confidence score, and heatmap visualization
+    
+    **About the Heatmap**: The heatmap highlights areas that most influenced the model's decision. Warmer colors (red/yellow) indicate regions with higher importance for the diagnosis.
     
     Note: This app works best with properly oriented, front-view chest X-ray images.
     """)
@@ -130,6 +238,8 @@ with st.expander("About the model"):
     This application uses a convolutional neural network (CNN) trained on a dataset of chest X-ray images.
     The model was trained to distinguish between normal chest X-rays and those showing signs of pneumonia.
     
-    Please note that this is a educational tool and should not replace professional medical diagnosis.
+    The GradCAM visualization helps make the model's decision process more transparent by showing which regions of the image contributed most to the classification.
+    
+    Please note that this is an educational tool and should not replace professional medical diagnosis.
     Always consult with a healthcare professional for medical advice.
     """)
