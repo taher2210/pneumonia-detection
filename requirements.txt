@@ -1,8 +1,6 @@
-streamlit
-tensorflow
-keras
-numpy
-pillow
-gdown
-opencv-python
-opencv-python-headless
+streamlit>=1.15.0
+tensorflow>=2.8.0
+numpy>=1.19.5
+pillow>=8.4.0
+matplotlib>=3.5.1
+gdown>=4.4.0
