@@ -85,8 +85,8 @@ def create_simple_attention_map(img_array, model):
     
     return attention_map
 
-# Function to overlay heatmap on image - UPDATED for red coloring
-def overlay_heatmap(img, heatmap, alpha=0.4):
+# Function to overlay heatmap on image - UPDATED for different colors based on diagnosis
+def overlay_heatmap(img, heatmap, is_pneumonia=True, alpha=0.4):
     # Convert PIL Image to numpy array if it's not already
     if isinstance(img, Image.Image):
         img_array = np.array(img)
@@ -99,14 +99,19 @@ def overlay_heatmap(img, heatmap, alpha=0.4):
     heatmap_img = heatmap_img.resize((img_array.shape[1], img_array.shape[0]))
     heatmap = np.array(heatmap_img)
     
-    # Apply RED colormap to heatmap (instead of jet which is blue->red)
-    # Using a custom colormap that goes from black to red
+    # Create colormap based on diagnosis
     colormap = np.zeros((heatmap.shape[0], heatmap.shape[1], 3), dtype=np.uint8)
-    # R channel - increases with intensity
-    colormap[:, :, 0] = heatmap  
-    # G & B channels - lower values for more reddish appearance
-    colormap[:, :, 1] = np.zeros_like(heatmap)
-    colormap[:, :, 2] = np.zeros_like(heatmap)
+    
+    if is_pneumonia:
+        # RED colormap for pneumonia (R channel only)
+        colormap[:, :, 0] = heatmap  # R channel
+        colormap[:, :, 1] = np.zeros_like(heatmap)  # G channel
+        colormap[:, :, 2] = np.zeros_like(heatmap)  # B channel
+    else:
+        # BLUE colormap for normal (B channel only)
+        colormap[:, :, 0] = np.zeros_like(heatmap)  # R channel
+        colormap[:, :, 1] = np.zeros_like(heatmap)  # G channel
+        colormap[:, :, 2] = heatmap  # B channel
     
     # Overlay heatmap on original image
     overlay = np.uint8(colormap * alpha + img_array * (1 - alpha))
@@ -154,14 +159,17 @@ def analyze_image(img_data):
         prediction = model.predict(img_array_batch)[0][0]
         probability = float(prediction)
         
+        # Determine if pneumonia or normal (for heatmap color selection)
+        is_pneumonia = probability > 0.5
+        
         # Try to generate visualization
         try:
             # Use simpler alternative visualization
             heatmap = create_simple_attention_map(img_array_batch, model)
             
             if heatmap is not None:
-                # Create heatmap overlay on original image
-                overlay_img = overlay_heatmap(img_resized, heatmap)
+                # Create heatmap overlay on original image with appropriate color
+                overlay_img = overlay_heatmap(img_resized, heatmap, is_pneumonia=is_pneumonia)
             else:
                 overlay_img = None
         except Exception as viz_error:
@@ -173,7 +181,8 @@ def analyze_image(img_data):
             'original_img': orig_img,
             'probability': probability,
             'heatmap': heatmap,
-            'overlay_img': overlay_img
+            'overlay_img': overlay_img,
+            'is_pneumonia': is_pneumonia
         }
         
     except Exception as e:
@@ -202,8 +211,9 @@ if uploaded_file is not None:
                 if results is not None:
                     # Display results
                     probability = results['probability']
+                    is_pneumonia = results['is_pneumonia']
                     
-                    if probability > 0.5:
+                    if is_pneumonia:
                         result = "🫁 **Pneumonia Detected**"
                         st.error(result)
                         st.write(f"Confidence: {probability:.2%}")
@@ -215,11 +225,12 @@ if uploaded_file is not None:
                     # Display visualization if available
                     if results['overlay_img'] is not None:
                         st.subheader("Attention Visualization")
-                        st.image(results['overlay_img'], caption="Heatmap of areas influencing the model's decision", use_column_width=True)
-                        st.info("The highlighted areas (red) show regions the model focused on when making its prediction.")
+                        color_text = "red" if is_pneumonia else "blue"
+                        st.image(results['overlay_img'], caption=f"Heatmap of areas influencing the model's decision", use_column_width=True)
+                        st.info(f"The highlighted areas ({color_text}) show regions the model focused on when making its prediction.")
                     
                     # Add visualization of confidence
-                    st.progress(probability if probability > 0.5 else 1-probability)
+                    st.progress(probability if is_pneumonia else 1-probability)
     except Exception as e:
         st.error(f"❌ Error: {e}")
         st.error(f"Details: {str(e)}")
@@ -239,7 +250,9 @@ with st.expander("How to use this app"):
     2. Click the "Analyze X-ray" button
     3. View the results, confidence score, and visualization
     
-    **About the Visualization**: The heatmap highlights areas that most influenced the model's decision. Red colors indicate regions with higher importance for the diagnosis.
+    **About the Visualization**: 
+    - For pneumonia cases: The heatmap highlights areas in **red** that most influenced the model's decision
+    - For normal cases: The heatmap highlights areas in **blue** that most influenced the model's decision
     
     Note: This app works best with properly oriented, front-view chest X-ray images.
     """)
