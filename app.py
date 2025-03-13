@@ -2,14 +2,15 @@ import streamlit as st
 import tensorflow as tf
 import numpy as np
 import os
+import cv2
 from tensorflow.keras.models import load_model
 import gdown
 
-# ✅ Set page config as the first command
+# ✅ Set page config
 st.set_page_config(page_title="Pneumonia Detection", layout="centered")
 
 # ✅ Google Drive Model File ID
-FILE_ID = "1hWt04b_JaqN8THcCXMT8cHdPsJ4iq3Of"  # Update with actual File ID
+FILE_ID = "1hWt04b_JaqN8THcCXMT8cHdPsJ4iq3Of"
 MODEL_PATH = "pneumonia_model.h5"
 
 # ✅ Function to download model if not available
@@ -30,6 +31,34 @@ except Exception as e:
     st.error(f"❌ Error loading model: {e}")
     st.stop()
 
+# ✅ Streamlit UI
+st.title("🩺 Pneumonia Detection from X-ray Images")
+st.write("Upload a chest X-ray image to check for pneumonia.")
+
+# ✅ File uploader
+uploaded_file = st.file_uploader("Choose an X-ray image...", type=["jpg", "png", "jpeg"])
+
+if uploaded_file is not None:
+    with st.spinner("Processing image..."):
+        try:
+            # ✅ Read the uploaded file properly
+            file_bytes = uploaded_file.getvalue()  # <-- Fixed line
+            
+            if file_bytes:
+                # Convert to NumPy array and decode
+                file_bytes = np.asarray(bytearray(file_bytes), dtype=np.uint8)
+                img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                
+                if img is None:
+                    st.error("❌ Error: Could not decode image. Please upload a valid image.")
+                else:
+                    st.success("✅ Image uploaded successfully!")
+                    st.image(img, caption="Uploaded X-ray", use_container_width=True)
+            else:
+                st.error("❌ Error: No image data found. Try re-uploading.")
+
+        except Exception as e:
+            st.error(f"❌ Error processing image: {e}")
 
 # ✅ Function to preprocess image
 def preprocess_image(img, img_size=(150, 150)):
