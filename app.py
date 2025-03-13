@@ -43,52 +43,65 @@ def download_model():
             return False
     return True
 
-# Function to generate GradCAM heatmap
+# Improved function to generate GradCAM heatmap
 def make_gradcam_heatmap(img_array, model):
-    # Create a model that maps the input image to the activations of the last conv layer
-    last_conv_layer = None
+    # First, ensure the model has been called at least once
+    _ = model(img_array)
     
     # Find the last convolutional layer
+    last_conv_layer = None
     for layer in reversed(model.layers):
-        if 'conv' in layer.name.lower():
-            last_conv_layer = layer.name
+        # Check if it's a Conv layer directly
+        if isinstance(layer, tf.keras.layers.Conv2D):
+            last_conv_layer = layer
             break
+        # Check if it's a container that might have Conv layers
+        elif hasattr(layer, 'layers'):
+            for inner_layer in reversed(layer.layers):
+                if isinstance(inner_layer, tf.keras.layers.Conv2D):
+                    last_conv_layer = inner_layer
+                    break
+            if last_conv_layer is not None:
+                break
     
     if last_conv_layer is None:
         st.warning("Could not find a convolutional layer for GradCAM visualization")
         return None
     
-    last_conv_layer_model = Model(
-        inputs=model.inputs,
-        outputs=[
-            model.get_layer(last_conv_layer).output, 
-            model.output
-        ]
-    )
+    # Create a simplified gradcam approach
+    conv_outputs = None
+    grad_model = None
     
-    # Compute gradients
+    # Try to create a model up to the last conv layer
+    try:
+        grad_model = tf.keras.models.Model(
+            inputs=model.inputs,
+            outputs=[last_conv_layer.output, model.output]
+        )
+    except:
+        st.warning("Could not create gradient model for visualization")
+        return None
+    
+    # Record operations for automatic differentiation
     with tf.GradientTape() as tape:
-        # Forward pass to get conv layer output and model prediction
-        conv_output, predictions = last_conv_layer_model(img_array)
-        class_index = 0  # Pneumonia is typically index 0 in binary classification
-        loss = predictions[:, class_index]
+        conv_outputs, predictions = grad_model(img_array)
+        class_idx = 0  # For pneumonia in binary classification
+        score = predictions[:, class_idx]
     
-    # Extract gradients
-    grads = tape.gradient(loss, conv_output)
+    # Gradient of the output with respect to the last conv layer
+    grads = tape.gradient(score, conv_outputs)
     
-    # Pool gradients
+    # Global average pooling
     pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
     
-    # Weight output feature maps with gradients
-    conv_output = conv_output[0]
-    heatmap = conv_output @ pooled_grads[..., tf.newaxis]
-    heatmap = tf.squeeze(heatmap)
+    # Weight the channels by gradient importance
+    conv_outputs = conv_outputs[0]
+    heatmap = tf.reduce_sum(tf.multiply(pooled_grads, conv_outputs), axis=-1)
     
-    # Normalize heatmap
+    # Normalize the heatmap
     heatmap = tf.maximum(heatmap, 0) / tf.math.reduce_max(heatmap)
-    heatmap = heatmap.numpy()
     
-    return heatmap
+    return heatmap.numpy()
 
 # Function to overlay heatmap on image
 def overlay_heatmap(img, heatmap, alpha=0.4):
