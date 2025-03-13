@@ -14,7 +14,7 @@ st.markdown(
     """
     This AI-powered tool helps in detecting **pneumonia** from chest X-ray images using a deep learning model.
     Simply upload an X-ray image, and the model will analyze it for signs of pneumonia. 
-    This project is part of my **final-year thesis** on medical AI applications.
+    
     """
 )
 
