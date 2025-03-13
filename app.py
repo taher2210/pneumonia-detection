@@ -1,32 +1,11 @@
 import streamlit as st
+
+# Streamlit Page Configuration must be the first Streamlit command
+st.set_page_config(page_title="Pneumonia Detection", layout="centered")
+
+# Rest of imports
 import os
 import sys
-
-# Install required packages if not already installed
-st.write("Checking and installing required packages...")
-packages_to_install = [
-    "gdown",
-    "numpy",
-    "matplotlib",
-    "tensorflow",
-    "pillow"
-]
-
-def install_packages():
-    import subprocess
-    for package in packages_to_install:
-        try:
-            __import__(package)
-            st.write(f"✅ {package} is already installed")
-        except ImportError:
-            st.write(f"📦 Installing {package}...")
-            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-            st.write(f"✅ {package} installed successfully")
-
-install_packages()
-
-# Now import the required packages
-import gdown
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
@@ -35,9 +14,7 @@ from tensorflow.keras.preprocessing import image
 from PIL import Image
 import io
 import tensorflow as tf
-
-# Streamlit Page Configuration
-st.set_page_config(page_title="Pneumonia Detection", layout="centered")
+import gdown
 
 # Project Introduction
 st.title("🫁 Pneumonia Detection from Chest X-rays")
