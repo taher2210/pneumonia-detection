@@ -85,7 +85,7 @@ def create_simple_attention_map(img_array, model):
     
     return attention_map
 
-# Function to overlay heatmap on image
+# Function to overlay heatmap on image - UPDATED for red coloring
 def overlay_heatmap(img, heatmap, alpha=0.4):
     # Convert PIL Image to numpy array if it's not already
     if isinstance(img, Image.Image):
@@ -99,9 +99,14 @@ def overlay_heatmap(img, heatmap, alpha=0.4):
     heatmap_img = heatmap_img.resize((img_array.shape[1], img_array.shape[0]))
     heatmap = np.array(heatmap_img)
     
-    # Apply colormap to heatmap
-    colormap = cm.jet(heatmap / 255.0)[:, :, :3]  # Drop alpha channel
-    colormap = np.uint8(255 * colormap)
+    # Apply RED colormap to heatmap (instead of jet which is blue->red)
+    # Using a custom colormap that goes from black to red
+    colormap = np.zeros((heatmap.shape[0], heatmap.shape[1], 3), dtype=np.uint8)
+    # R channel - increases with intensity
+    colormap[:, :, 0] = heatmap  
+    # G & B channels - lower values for more reddish appearance
+    colormap[:, :, 1] = np.zeros_like(heatmap)
+    colormap[:, :, 2] = np.zeros_like(heatmap)
     
     # Overlay heatmap on original image
     overlay = np.uint8(colormap * alpha + img_array * (1 - alpha))
@@ -211,7 +216,7 @@ if uploaded_file is not None:
                     if results['overlay_img'] is not None:
                         st.subheader("Attention Visualization")
                         st.image(results['overlay_img'], caption="Heatmap of areas influencing the model's decision", use_column_width=True)
-                        st.info("The highlighted areas (red/yellow) show regions the model focused on when making its prediction.")
+                        st.info("The highlighted areas (red) show regions the model focused on when making its prediction.")
                     
                     # Add visualization of confidence
                     st.progress(probability if probability > 0.5 else 1-probability)
@@ -234,7 +239,7 @@ with st.expander("How to use this app"):
     2. Click the "Analyze X-ray" button
     3. View the results, confidence score, and visualization
     
-    **About the Visualization**: The heatmap highlights areas that most influenced the model's decision. Warmer colors (red/yellow) indicate regions with higher importance for the diagnosis.
+    **About the Visualization**: The heatmap highlights areas that most influenced the model's decision. Red colors indicate regions with higher importance for the diagnosis.
     
     Note: This app works best with properly oriented, front-view chest X-ray images.
     """)
